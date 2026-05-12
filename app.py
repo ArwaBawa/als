@@ -664,7 +664,7 @@ if date_col and date_col in df.columns and selected_param in df.columns:
         # Change freq="M" to freq="D" if you want daily values instead.
         trend_df = (
             trend_df
-            .groupby([pd.Grouper(key=date_col, freq="M"), zone_col])[selected_param]
+            .groupby([pd.Grouper(key=date_col, freq="ME"), zone_col])[selected_param]
             .median()
             .reset_index(name="Median Value")
             .sort_values([date_col, zone_col])
