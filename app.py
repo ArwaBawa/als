@@ -376,13 +376,43 @@ if not available_params:
 # =========================================================
 st.markdown("## 1. Filters")
 
-selected_param = st.selectbox(
-    "Parameter",
-    available_params,
-    index=available_params.index("Lead mg/kg") if "Lead mg/kg" in available_params else 0
-)
+col1, col2, col3 = st.columns([1.2, 1.3, 1.2])
 
-st.caption("The dashboard is filtered by parameter only. All samples stay visible unless the selected parameter is used for summaries, map alerts, trend, and affected samples.")
+with col1:
+    selected_param = st.selectbox(
+        "Parameter",
+        available_params,
+        index=available_params.index("Lead mg/kg") if "Lead mg/kg" in available_params else 0
+    )
+
+with col2:
+    zone_options = sorted(pd.Series(raw_df[zone_col].dropna().unique()).tolist())
+    selected_zones = st.multiselect(
+        "Zones",
+        zone_options,
+        default=zone_options
+    )
+
+with col3:
+    if date_col and date_col in raw_df.columns:
+        raw_df[date_col] = pd.to_datetime(raw_df[date_col], errors="coerce")
+        date_values = raw_df[date_col].dropna()
+
+        if not date_values.empty:
+            min_date = date_values.min().date()
+            max_date = date_values.max().date()
+            selected_date_range = st.date_input(
+                "Date range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date
+            )
+        else:
+            selected_date_range = None
+    else:
+        selected_date_range = None
+
+st.caption("Analysis scope was removed. The dashboard always analyzes the selected parameter only, while zone and date filters still control the displayed data.")
 
 # =========================================================
 # PREP DATA
@@ -401,11 +431,24 @@ if date_col and date_col in df.columns:
 # =========================================================
 # APPLY FILTERS
 # =========================================================
-# No row-level zone/date filters are applied.
-# The selected parameter controls the summaries, map alerts, trend, and affected samples.
+if selected_zones:
+    df = df[df[zone_col].isin(selected_zones)].copy()
+
+if (
+    selected_date_range
+    and isinstance(selected_date_range, tuple)
+    and len(selected_date_range) == 2
+    and date_col
+    and date_col in df.columns
+):
+    start_date, end_date = selected_date_range
+    df = df[
+        (df[date_col].dt.date >= start_date) &
+        (df[date_col].dt.date <= end_date)
+    ].copy()
 
 if df.empty:
-    st.warning("No data available in the uploaded file.")
+    st.warning("No data after filters.")
     st.stop()
 
 # =========================================================
@@ -424,7 +467,7 @@ trend_df = build_trend(df, zone_col, date_col, trend_param) if date_col else pd.
 # DISPLAY ALL DATA
 # =========================================================
 st.markdown("## 2. All Data")
-st.caption("This table shows all uploaded samples. The selected parameter is used for analysis below, not to hide rows here.")
+st.caption("This table shows the data after the selected zone/date filters. The selected parameter is used for summaries, map alerts, graph, and affected samples.")
 st.dataframe(df, use_container_width=True)
 
 # =========================================================
@@ -574,7 +617,7 @@ elif map_mode == "Sample map":
 
 else:
     if hotspots.empty:
-        st.info("No affected samples found for the current analysis scope.")
+        st.info("No affected samples found for the current selected parameter.")
 
     for _, row in hotspots.iterrows():
         z = int(row[zone_col])
@@ -602,25 +645,43 @@ else:
 st_folium(m, width=None, height=620)
 
 # =========================================================
-# LINE GRAPH
+# PARAMETER GRAPH
 # =========================================================
-st.markdown("## 5. Line Graph")
+st.markdown("## 5. Parameter Graph")
+st.caption("For sediment samples, a median-by-zone bar chart is clearer than a line graph because samples are sparse and not continuous sensor readings.")
 
-if date_col and not trend_df.empty:
-    chart_df = trend_df.copy()
-    chart_df[date_col] = pd.to_datetime(chart_df[date_col], errors="coerce")
-    chart_df = chart_df.dropna(subset=[date_col])
+chart_value_col = f"Median {selected_param}"
+zone_chart = (
+    df.dropna(subset=[selected_param])
+    .groupby(zone_col)[selected_param]
+    .median()
+    .reset_index(name=chart_value_col)
+    .sort_values(chart_value_col, ascending=False)
+)
 
-    if chart_df.empty:
-        st.info("No valid dates available for the line graph.")
-    else:
-        pivot_df = chart_df.pivot(index=date_col, columns=zone_col, values="median_value")
-        st.caption(f"Median {selected_param} by zone over time")
-        st.line_chart(pivot_df)
-elif not date_col:
-    st.info("No date column was found, so the line graph cannot be displayed.")
+if zone_chart.empty:
+    st.info(f"No valid values available for {selected_param}.")
 else:
-    st.info(f"No trend data available for {selected_param}.")
+    st.markdown(f"**Median {selected_param} by zone**")
+    st.bar_chart(zone_chart.set_index(zone_col)[chart_value_col])
+
+    limit_value = PARAM_LIMITS.get(selected_param)
+    if limit_value is not None:
+        st.caption(f"Regulatory/reference limit used in this dashboard: {limit_value}")
+
+if date_col and date_col in df.columns:
+    scatter_df = df[[date_col, zone_col, selected_param]].dropna().copy()
+    if not scatter_df.empty:
+        scatter_df["Zone"] = "Zone " + scatter_df[zone_col].astype(str)
+        st.markdown(f"**Sample values over time for {selected_param}**")
+        st.scatter_chart(
+            scatter_df,
+            x=date_col,
+            y=selected_param,
+            color="Zone"
+        )
+else:
+    st.info("No date column was found, so the time scatter plot cannot be displayed.")
 
 # =========================================================
 # AFFECTED SAMPLE TABLE
