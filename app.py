@@ -1,6 +1,7 @@
 import html
 from typing import Dict, List, Optional
 
+import altair as alt
 import folium
 import numpy as np
 import pandas as pd
@@ -645,43 +646,56 @@ else:
 st_folium(m, width=None, height=620)
 
 # =========================================================
-# PARAMETER GRAPH
+# LINE GRAPH
 # =========================================================
-st.markdown("## 5. Parameter Graph")
-st.caption("For sediment samples, a median-by-zone bar chart is clearer than a line graph because samples are sparse and not continuous sensor readings.")
+st.markdown("## 5. Line Graph")
+st.caption(f"One line per zone showing median {selected_param} over time.")
 
-chart_value_col = f"Median {selected_param}"
-zone_chart = (
-    df.dropna(subset=[selected_param])
-    .groupby(zone_col)[selected_param]
-    .median()
-    .reset_index(name=chart_value_col)
-    .sort_values(chart_value_col, ascending=False)
-)
+if date_col and date_col in df.columns and selected_param in df.columns:
+    trend_df = df[[date_col, zone_col, selected_param]].copy()
+    trend_df[date_col] = pd.to_datetime(trend_df[date_col], errors="coerce")
+    trend_df[selected_param] = pd.to_numeric(trend_df[selected_param], errors="coerce")
+    trend_df = trend_df.dropna(subset=[date_col, zone_col, selected_param])
 
-if zone_chart.empty:
-    st.info(f"No valid values available for {selected_param}.")
-else:
-    st.markdown(f"**Median {selected_param} by zone**")
-    st.bar_chart(zone_chart.set_index(zone_col)[chart_value_col])
-
-    limit_value = PARAM_LIMITS.get(selected_param)
-    if limit_value is not None:
-        st.caption(f"Regulatory/reference limit used in this dashboard: {limit_value}")
-
-if date_col and date_col in df.columns:
-    scatter_df = df[[date_col, zone_col, selected_param]].dropna().copy()
-    if not scatter_df.empty:
-        scatter_df["Zone"] = "Zone " + scatter_df[zone_col].astype(str)
-        st.markdown(f"**Sample values over time for {selected_param}**")
-        st.scatter_chart(
-            scatter_df,
-            x=date_col,
-            y=selected_param,
-            color="Zone"
+    if trend_df.empty:
+        st.info(f"No valid time data available for {selected_param}.")
+    else:
+        # Monthly grouping makes sparse sediment data easier to read.
+        # Change freq="M" to freq="D" if you want daily values instead.
+        trend_df = (
+            trend_df
+            .groupby([pd.Grouper(key=date_col, freq="M"), zone_col])[selected_param]
+            .median()
+            .reset_index(name="Median Value")
+            .sort_values([date_col, zone_col])
         )
+
+        trend_df["Zone"] = "Zone " + trend_df[zone_col].astype(str)
+
+        line_chart = (
+            alt.Chart(trend_df)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X(f"{date_col}:T", title="Sampling Date"),
+                y=alt.Y("Median Value:Q", title=f"Median {selected_param}"),
+                color=alt.Color("Zone:N", title="Zone"),
+                tooltip=[
+                    alt.Tooltip(f"{date_col}:T", title="Date", format="%Y-%m-%d"),
+                    alt.Tooltip("Zone:N", title="Zone"),
+                    alt.Tooltip("Median Value:Q", title=f"Median {selected_param}", format=".2f"),
+                ],
+            )
+            .properties(height=460)
+            .interactive()
+        )
+
+        st.altair_chart(line_chart, use_container_width=True)
+
+        limit_value = PARAM_LIMITS.get(selected_param)
+        if limit_value is not None:
+            st.caption(f"Regulatory/reference limit used in this dashboard: {limit_value}")
 else:
-    st.info("No date column was found, so the time scatter plot cannot be displayed.")
+    st.info("No date column was found, so the line graph cannot be displayed.")
 
 # =========================================================
 # AFFECTED SAMPLE TABLE
