@@ -374,51 +374,15 @@ if not available_params:
 # =========================================================
 # MAIN FILTERS
 # =========================================================
-st.markdown("## Filters")
+st.markdown("## 1. Filters")
 
-col1, col2 = st.columns(2)
+selected_param = st.selectbox(
+    "Parameter",
+    available_params,
+    index=available_params.index("Lead mg/kg") if "Lead mg/kg" in available_params else 0
+)
 
-with col1:
-    selected_param = st.selectbox(
-        "Parameter",
-        available_params,
-        index=available_params.index("Lead mg/kg") if "Lead mg/kg" in available_params else 0
-    )
-
-with col2:
-    analysis_mode = st.selectbox(
-        "Analysis scope",
-        ["Selected parameter only", "All parameters"]
-    )
-
-col3, col4 = st.columns([1.3, 1])
-
-with col3:
-    zone_options = sorted(pd.Series(raw_df[zone_col].dropna().unique()).tolist())
-    selected_zones = st.multiselect(
-        "Zones",
-        zone_options,
-        default=zone_options
-    )
-
-with col4:
-    if date_col and date_col in raw_df.columns:
-        raw_df[date_col] = pd.to_datetime(raw_df[date_col], errors="coerce")
-        date_values = raw_df[date_col].dropna()
-
-        if not date_values.empty:
-            min_date = date_values.min().date()
-            max_date = date_values.max().date()
-            selected_date_range = st.date_input(
-                "Date range",
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date
-            )
-        else:
-            selected_date_range = None
-    else:
-        selected_date_range = None
+st.caption("The dashboard is filtered by parameter only. All samples stay visible unless the selected parameter is used for summaries, map alerts, trend, and affected samples.")
 
 # =========================================================
 # PREP DATA
@@ -437,31 +401,18 @@ if date_col and date_col in df.columns:
 # =========================================================
 # APPLY FILTERS
 # =========================================================
-if selected_zones:
-    df = df[df[zone_col].isin(selected_zones)].copy()
-
-if (
-    selected_date_range
-    and isinstance(selected_date_range, tuple)
-    and len(selected_date_range) == 2
-    and date_col
-    and date_col in df.columns
-):
-    start_date, end_date = selected_date_range
-    df = df[
-        (df[date_col].dt.date >= start_date) &
-        (df[date_col].dt.date <= end_date)
-    ].copy()
+# No row-level zone/date filters are applied.
+# The selected parameter controls the summaries, map alerts, trend, and affected samples.
 
 if df.empty:
-    st.warning("No data after filters.")
+    st.warning("No data available in the uploaded file.")
     st.stop()
 
 # =========================================================
 # ACTIVE ANALYSIS LOGIC
 # =========================================================
-active_params = get_active_parameters(analysis_mode, selected_param, available_params)
-active_limits = {p: PARAM_LIMITS[p] for p in active_params}
+active_params = [selected_param]
+active_limits = {selected_param: PARAM_LIMITS[selected_param]}
 
 hotspots = build_hotspot_table(df, active_limits)
 zone_summary = build_zone_summary(df, zone_col, hotspots)
@@ -469,6 +420,12 @@ param_exceedance = build_param_exceedance_table(df, active_limits)
 trend_param = selected_param
 trend_df = build_trend(df, zone_col, date_col, trend_param) if date_col else pd.DataFrame()
 
+# =========================================================
+# DISPLAY ALL DATA
+# =========================================================
+st.markdown("## 2. All Data")
+st.caption("This table shows all uploaded samples. The selected parameter is used for analysis below, not to hide rows here.")
+st.dataframe(df, use_container_width=True)
 
 # =========================================================
 # KPI
@@ -506,7 +463,7 @@ with mc4:
 # =========================================================
 # ZONE DECISION SUMMARY
 # =========================================================
-st.subheader("Zones Summary")
+st.markdown("## 3. Zones Summary")
 
 simple_cols = [
     "Zone", "Projects", "Status", "% Affected", "Alert",
@@ -522,7 +479,7 @@ st.dataframe(styled_zone_summary, use_container_width=True)
 # =========================================================
 # MAP
 # =========================================================
-st.subheader("Map")
+st.markdown("## 4. Map")
 
 map_mode = st.radio(
     "Map view",
@@ -645,47 +602,47 @@ else:
 st_folium(m, width=None, height=620)
 
 # =========================================================
+# LINE GRAPH
+# =========================================================
+st.markdown("## 5. Line Graph")
+
+if date_col and not trend_df.empty:
+    chart_df = trend_df.copy()
+    chart_df[date_col] = pd.to_datetime(chart_df[date_col], errors="coerce")
+    chart_df = chart_df.dropna(subset=[date_col])
+
+    if chart_df.empty:
+        st.info("No valid dates available for the line graph.")
+    else:
+        pivot_df = chart_df.pivot(index=date_col, columns=zone_col, values="median_value")
+        st.caption(f"Median {selected_param} by zone over time")
+        st.line_chart(pivot_df)
+elif not date_col:
+    st.info("No date column was found, so the line graph cannot be displayed.")
+else:
+    st.info(f"No trend data available for {selected_param}.")
+
+# =========================================================
 # AFFECTED SAMPLE TABLE
 # =========================================================
-st.subheader("Affected Samples")
+st.markdown("## 6. Affected Samples")
 
 if hotspots.empty:
-    st.success("No affected samples found for the selected filters and analysis scope.")
+    st.success(f"No affected samples found for {selected_param}.")
 else:
-    if analysis_mode == "All parameters":
-        available_filter_params = list(active_limits.keys())
-        selected_filter_param = st.selectbox(
-            "Filter affected samples by parameter",
-            ["All affected parameters"] + available_filter_params
-        )
-
-        filtered_hotspots = hotspots.copy()
-        if selected_filter_param != "All affected parameters":
-            filtered_hotspots = filtered_hotspots[
-                filtered_hotspots["affected_parameters"].apply(
-                    lambda x: selected_filter_param in x
-                )
-            ].copy()
-            visible_params = [selected_filter_param]
-        else:
-            visible_params = available_filter_params
-    else:
-        filtered_hotspots = hotspots.copy()
-        visible_params = [selected_param]
-        st.caption(f"Showing affected samples for: {selected_param}")
+    st.caption(f"Showing samples where {selected_param} exceeds the limit of {PARAM_LIMITS[selected_param]}.")
 
     table_cols = [
         c for c in [
             zone_col, date_col, "Latitude", "Longitude",
             "Project Name", "Sample name", "affected_parameters_text"
         ]
-        if c is not None and c in filtered_hotspots.columns
+        if c is not None and c in hotspots.columns
     ]
 
     st.dataframe(
-        filtered_hotspots[table_cols + visible_params].rename(
+        hotspots[table_cols + [selected_param]].rename(
             columns={"affected_parameters_text": "Affected parameters"}
         ),
         use_container_width=True
     )
-
