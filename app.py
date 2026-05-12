@@ -646,34 +646,45 @@ else:
 st_folium(m, width=None, height=620)
 
 # =========================================================
-# LINE GRAPH
+# LINE GRAPHS
 # =========================================================
-st.markdown("## 5. Line Graph")
-st.caption(f"One line per zone showing median {selected_param} over time.")
+st.markdown("## 5. Line Graphs")
+st.caption(f"Each colored line represents one zone over time for {selected_param}.")
 
 if date_col and date_col in df.columns and selected_param in df.columns:
-    trend_df = df[[date_col, zone_col, selected_param]].copy()
-    trend_df[date_col] = pd.to_datetime(trend_df[date_col], errors="coerce")
-    trend_df[selected_param] = pd.to_numeric(trend_df[selected_param], errors="coerce")
-    trend_df = trend_df.dropna(subset=[date_col, zone_col, selected_param])
+    trend_base = df[[date_col, zone_col, selected_param]].copy()
+    trend_base[date_col] = pd.to_datetime(trend_base[date_col], errors="coerce")
+    trend_base[selected_param] = pd.to_numeric(trend_base[selected_param], errors="coerce")
+    trend_base = trend_base.dropna(subset=[date_col, zone_col, selected_param])
 
-    if trend_df.empty:
+    if trend_base.empty:
         st.info(f"No valid time data available for {selected_param}.")
     else:
-        # Monthly grouping makes sparse sediment data easier to read.
-        # Change freq="M" to freq="D" if you want daily values instead.
-        trend_df = (
-            trend_df
+        # Monthly grouping makes sparse sediment sampling easier to read.
+        # ME = month end. Use "D" instead if you want daily grouping.
+        median_trend_df = (
+            trend_base
             .groupby([pd.Grouper(key=date_col, freq="ME"), zone_col])[selected_param]
             .median()
             .reset_index(name="Median Value")
             .sort_values([date_col, zone_col])
         )
+        median_trend_df["Zone"] = "Zone " + median_trend_df[zone_col].astype(str)
 
-        trend_df["Zone"] = "Zone " + trend_df[zone_col].astype(str)
+        mean_trend_df = (
+            trend_base
+            .groupby([pd.Grouper(key=date_col, freq="ME"), zone_col])[selected_param]
+            .mean()
+            .reset_index(name="Mean Value")
+            .sort_values([date_col, zone_col])
+        )
+        mean_trend_df["Zone"] = "Zone " + mean_trend_df[zone_col].astype(str)
 
-        line_chart = (
-            alt.Chart(trend_df)
+        st.markdown("### 5.1 Median Trend by Zone")
+        st.caption("Median shows the typical condition of each zone and reduces the effect of one extreme hotspot sample.")
+
+        median_chart = (
+            alt.Chart(median_trend_df)
             .mark_line(point=True)
             .encode(
                 x=alt.X(f"{date_col}:T", title="Sampling Date"),
@@ -685,17 +696,37 @@ if date_col and date_col in df.columns and selected_param in df.columns:
                     alt.Tooltip("Median Value:Q", title=f"Median {selected_param}", format=".2f"),
                 ],
             )
-            .properties(height=460)
+            .properties(height=430)
             .interactive()
         )
+        st.altair_chart(median_chart, use_container_width=True)
 
-        st.altair_chart(line_chart, use_container_width=True)
+        st.markdown("### 5.2 Mean Trend by Zone")
+        st.caption("Mean shows the overall average and is more sensitive to hotspot samples.")
+
+        mean_chart = (
+            alt.Chart(mean_trend_df)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X(f"{date_col}:T", title="Sampling Date"),
+                y=alt.Y("Mean Value:Q", title=f"Mean {selected_param}"),
+                color=alt.Color("Zone:N", title="Zone"),
+                tooltip=[
+                    alt.Tooltip(f"{date_col}:T", title="Date", format="%Y-%m-%d"),
+                    alt.Tooltip("Zone:N", title="Zone"),
+                    alt.Tooltip("Mean Value:Q", title=f"Mean {selected_param}", format=".2f"),
+                ],
+            )
+            .properties(height=430)
+            .interactive()
+        )
+        st.altair_chart(mean_chart, use_container_width=True)
 
         limit_value = PARAM_LIMITS.get(selected_param)
         if limit_value is not None:
             st.caption(f"Regulatory/reference limit used in this dashboard: {limit_value}")
 else:
-    st.info("No date column was found, so the line graph cannot be displayed.")
+    st.info("No date column was found, so the line graphs cannot be displayed.")
 
 # =========================================================
 # AFFECTED SAMPLE TABLE
